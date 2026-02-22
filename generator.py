@@ -15,149 +15,153 @@ from googleapiclient.http import MediaFileUpload
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 # --- 1. API Keys & Scopes ---
-# PASTE YOUR KEYS HERE
 os.environ["GEMINI_API_KEY"] = "AIzaSyBIaSHg1HJ_eDsCZ1wSyvTsUNYKvPeVuGU"
 os.environ["PEXELS_API_KEY"] = "O2yUSiq8AhhBZDR2YaCEnW4MGlRrUNGocNmGU60yWNsVS8ozpPScSUXs"
 
 client = genai.Client()
 YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
-def generate_script_and_prompt(topic):
-    """Stage 1: Gemini 2.5 Flash writes a longer, engaging narration script."""
-    print(f"🧠 Writing extended script for: {topic}...")
+def generate_content_and_keywords(topic):
+    """Stage 1: Gemini provides the script and a list of keywords for multiple scenes."""
+    print(f"🧠 Engineering montage visuals for: {topic}...")
     
-    response = client.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=f"You are a video producer. For the topic '{topic}', write a highly engaging, 45-second narration script for a YouTube Short (roughly 120 words). Focus on retention. Do not include brackets or visual directions, just the spoken text."
+    prompt = (
+        f"Write a 45-second narration script for a YouTube Short about '{topic}'. "
+        "After the script, provide 5 unique 'SEARCH_KEYWORDS' for different scenes. "
+        "Format: [SCRIPT] ... [KEYWORDS] term1, term2, term3, term4, term5"
     )
     
-    script = response.text.strip()
-    print(f"\n📝 Script: {script}\n")
-    return script
+    response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+    full_text = response.text.strip()
+    
+    if "[KEYWORDS]" in full_text:
+        parts = full_text.split("[KEYWORDS]")
+        script = parts[0].replace("[SCRIPT]", "").strip()
+        keywords = [k.strip() for k in parts[1].split(",")]
+    else:
+        script = full_text
+        keywords = [topic, "cinematic", "action", "dark", "technology"]
+        
+    return script, keywords
 
-def get_pexels_video(query, output_filename="background.mp4"):
-    """Stage 2: Fetches a free, royalty-free vertical video from Pexels with anti-bot headers."""
-    print(f"🎥 Searching Pexels for a vertical video about: '{query}'...")
-    
-    url = f"https://api.pexels.com/videos/search?query={urllib.parse.quote(query)}&orientation=portrait&size=medium&per_page=15"
-    
+def download_video_set(keywords):
+    """Stage 2: Downloads a unique clip for each keyword provided by Gemini."""
+    video_paths = []
     headers = {
         'Authorization': os.environ["PEXELS_API_KEY"],
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
-    req = urllib.request.Request(url, headers=headers)
-    
-    try:
-        with urllib.request.urlopen(req) as response:
-            data = json.loads(response.read().decode())
-            
-            if not data.get('videos'):
-                print("❌ No videos found on Pexels.")
-                return None
+    BANNED_WORDS = ["birthday", "cake", "party", "celebration"]
+
+    for i, query in enumerate(keywords):
+        print(f"🎥 Scouting Scene {i+1}: '{query}'...")
+        url = f"https://api.pexels.com/videos/search?query={urllib.parse.quote(query)}&orientation=portrait&per_page=5"
+        
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req) as response:
+                data = json.loads(response.read().decode())
+                videos = data.get('videos', [])
                 
-            video = random.choice(data['videos'])
-            video_files = video['video_files']
-            hd_file = next((file for file in video_files if file['quality'] == 'hd'), video_files[0])
-            download_link = hd_file['link']
-            
-            print("⬇️ Downloading video file securely...")
-            dl_req = urllib.request.Request(download_link, headers={'User-Agent': headers['User-Agent']})
-            with urllib.request.urlopen(dl_req) as dl_response, open(output_filename, 'wb') as out_file:
-                out_file.write(dl_response.read())
-                
-            print(f"✅ Video background saved as {output_filename}")
-            return output_filename
-            
-    except Exception as e:
-        print(f"❌ Failed to fetch Pexels video: {e}")
-        return None
+                for video in videos:
+                    video_tags = [tag.get('name', '').lower() for tag in video.get('tags', [])]
+                    if any(bad in video_tags for bad in BANNED_WORDS):
+                        continue 
+                    
+                    video_files = video['video_files']
+                    hd_file = next((f for f in video_files if f['quality'] == 'hd'), video_files[0])
+                    
+                    path = f"scene_{i}.mp4"
+                    dl_req = urllib.request.Request(hd_file['link'], headers={'User-Agent': headers['User-Agent']})
+                    with urllib.request.urlopen(dl_req) as dl_res, open(path, 'wb') as out_file:
+                        out_file.write(dl_res.read())
+                    video_paths.append(path)
+                    break 
+        except Exception as e:
+            print(f"⚠️ Scene {i+1} failed: {e}")
+
+    return video_paths
 
 async def generate_audio(text, output_filename="voiceover.mp3"):
-    """Stage 3: edge-tts generates a realistic voiceover locally."""
-    print("🎙️ Generating free voiceover...")
-    communicate = edge_tts.Communicate(text, "en-US-ChristopherNeural")
+    """Stage 3: Local TTS."""
+    print("🎙️ Generating voiceover...")
+    communicate = edge_tts.Communicate(text, "en-US-GuyNeural")
     await communicate.save(output_filename)
-    print(f"✅ Voiceover saved as {output_filename}")
     return output_filename
 
-def assemble_video(audio_path, video_bg_path, output_filename="final_video.mp4"):
-    """Stage 4: MoviePy loops the background and stitches the audio."""
-    print("🎬 Assembling the final extended vertical video...")
-    
+def assemble_montage(audio_path, video_paths, output_filename="final_video.mp4"):
+    """Stage 4: Stitches multiple clips together and CLOSES them to prevent WinError 32."""
+    print("🎬 Assembling the montage...")
     audio_clip = AudioFileClip(audio_path)
-    video_clip = VideoFileClip(video_bg_path)
     
-    # LOOP LOGIC: If the voiceover is longer than the stock video, loop the video
-    if audio_clip.duration > video_clip.duration:
-        print("🔄 Looping background video to match audio length...")
-        loop_count = int(audio_clip.duration // video_clip.duration) + 1
-        video_clip = concatenate_videoclips([video_clip] * loop_count)
+    loaded_clips = []
+    for p in video_paths:
+        try:
+            clip = VideoFileClip(p).without_audio()
+            loaded_clips.append(clip)
+        except:
+            continue
+
+    if not loaded_clips:
+        audio_clip.close() # Clean up even on failure
+        return None
+
+    bg_video = concatenate_videoclips(loaded_clips, method="compose")
     
-    # Trim to exact length and add audio (MoviePy v2.0 syntax)
-    final_clip = video_clip.subclipped(0, audio_clip.duration).with_audio(audio_clip)
+    if bg_video.duration < audio_clip.duration:
+        loop_count = int(audio_clip.duration // bg_video.duration) + 1
+        bg_video = concatenate_videoclips([bg_video] * loop_count)
+
+    final_clip = bg_video.subclipped(0, audio_clip.duration).with_audio(audio_clip)
     
-    final_clip.write_videofile(
-        output_filename, 
-        fps=24, 
-        codec="libx264", 
-        audio_codec="aac", 
-        temp_audiofile="temp-audio.m4a", 
-        remove_temp=True, 
-        logger=None
-    )
-    print(f"\n🎉 Success! Final video rendered as {output_filename}")
+    final_clip.write_videofile(output_filename, fps=24, codec="libx264", audio_codec="aac", 
+                               temp_audiofile="temp-audio.m4a", remove_temp=True, logger=None)
+    
+    # --- CRITICAL FIX FOR WINDOWS PERMISSION ERROR ---
+    print("🧹 Cleaning up media handles...")
+    final_clip.close()
+    audio_clip.close()
+    bg_video.close()
+    for clip in loaded_clips:
+        clip.close()
+
+    # Delay slightly to ensure Windows OS releases the file lock
+    import time
+    time.sleep(1)
+
+    for p in video_paths:
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except Exception as e:
+            print(f"⚠️ Could not delete {p}: {e}")
 
 def upload_to_youtube(video_path, title, description):
-    """Stage 5: Authenticate and push to your channel."""
-    print("🚀 Authenticating with YouTube...")
-    
+    """Stage 5: Final Upload."""
+    if not os.path.exists('client_secret.json'): 
+        print("❌ client_secret.json not found. Skipping upload.")
+        return
     flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', YOUTUBE_SCOPES)
     credentials = flow.run_local_server(port=0)
     youtube = build('youtube', 'v3', credentials=credentials)
-
-    print("📤 Uploading to YouTube Shorts...")
-    body = {
-        'snippet': {
-            'title': title,
-            'description': description + "\n\n#Shorts #Comedy #AIAutomation",
-            'tags': ['funny', 'skit', 'shorts', 'automation'],
-            'categoryId': '23'
-        },
-        'status': {
-            'privacyStatus': 'private'
-        }
-    }
-
+    body = {'snippet': {'title': title, 'description': description + "\n\n#Shorts #AI #Automation", 'categoryId': '23'},
+            'status': {'privacyStatus': 'private'}}
     media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
-    request = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media)
-    
-    response = request.execute()
-    print(f"\n✅ Video uploaded successfully! Video ID: {response.get('id')}")
-    print(f"🔗 View it here: https://studio.youtube.com/video/{response.get('id')}/edit")
+    youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media).execute()
+    print("🚀 Montage is live on YouTube!")
 
 async def main():
-    # --- 2. Execution ---
-    test_topic = "a masked man robbing a bank but fails miserably"
+    # --- TOPIC ---
+    my_topic = "Funny cat stories"
     
-    # 1. Write it (Now ~45 seconds)
-    script = generate_script_and_prompt(test_topic)
+    script, keywords = generate_content_and_keywords(my_topic)
+    video_files = download_video_set(keywords) 
+    audio = await generate_audio(script)
     
-    # 2. Get Visuals (using "funny office" as search term)
-    bg_video_file = get_pexels_video("funny office") 
-    
-    # 3. Get Audio
-    audio_file = await generate_audio(script)
-    
-    # 4. Assemble and Upload
-    if bg_video_file and audio_file:
-        final_video_path = "final_video.mp4"
-        assemble_video(audio_file, bg_video_file, final_video_path)
-        
-        upload_to_youtube(
-            video_path=final_video_path,
-            title="AI Corporate Comedy Skit",
-            description=script
-        )
+    if video_files and audio:
+        final_video = "final_video.mp4"
+        assemble_montage(audio, video_files, final_video)
+        upload_to_youtube(final_video, f"AI Story: {my_topic}", script)
 
 if __name__ == "__main__":
     asyncio.run(main())
