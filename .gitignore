@@ -1,0 +1,43 @@
+# =========================
+# Credentials & API Keys (CRITICAL)
+# =========================
+.env
+client_secret.json
+credentials.json
+token.pickle
+token.json
+*api_key*
+
+# =========================
+# Virtual Environments
+# =========================
+venv/
+env/
+.venv/
+Pipfile.lock
+
+# =========================
+# Generated Media (Audio/Video)
+# =========================
+*.mp4
+*.mp3
+*.wav
+*.avi
+*.mov
+background.mp4
+voiceover.mp3
+final_video.mp4
+
+# =========================
+# Python Specific
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# =========================
+# OS Specific
+# =========================
+.DS_Store
+Thumbs.db
