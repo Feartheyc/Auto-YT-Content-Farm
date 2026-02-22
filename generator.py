@@ -1,88 +1,163 @@
 import os
+import json
+import random
 import asyncio
 import urllib.parse
 import urllib.request
+import urllib.error
 import edge_tts
 from google import genai
-from moviepy import ImageClip, AudioFileClip # <-- FIXED THIS LINE
+from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
 
-# --- 1. API Keys ---
-# Generate a NEW key and paste it here
-os.environ["GEMINI_API_KEY"] = "AIzaSyDx-8YsH98grAF9ttdqAr47L8Oe6HntoKk"
+# --- YouTube API Libraries ---
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from google_auth_oauthlib.flow import InstalledAppFlow
+
+# --- 1. API Keys & Scopes ---
+# PASTE YOUR KEYS HERE
+os.environ["GEMINI_API_KEY"] = "AIzaSyBIaSHg1HJ_eDsCZ1wSyvTsUNYKvPeVuGU"
+os.environ["PEXELS_API_KEY"] = "O2yUSiq8AhhBZDR2YaCEnW4MGlRrUNGocNmGU60yWNsVS8ozpPScSUXs"
+
 client = genai.Client()
+YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
 def generate_script_and_prompt(topic):
-    """Stage 1: Gemini 2.5 Flash writes the narration and a vertical image prompt."""
-    print(f"🧠 Writing script and image prompt for: {topic}...")
+    """Stage 1: Gemini 2.5 Flash writes a longer, engaging narration script."""
+    print(f"🧠 Writing extended script for: {topic}...")
     
     response = client.models.generate_content(
         model='gemini-2.5-flash',
-        contents=f"You are a video producer. For the topic '{topic}', write a 2-sentence narration script for a YouTube Short. Then, on a new line, write 'PROMPT:' followed by a highly detailed, 9:16 portrait aspect ratio image generation prompt that perfectly matches the narration."
+        contents=f"You are a video producer. For the topic '{topic}', write a highly engaging, 45-second narration script for a YouTube Short (roughly 120 words). Focus on retention. Do not include brackets or visual directions, just the spoken text."
     )
     
-    text_blocks = response.text.split("PROMPT:")
-    script = text_blocks[0].strip()
-    image_prompt = text_blocks[1].strip() if len(text_blocks) > 1 else "A beautiful cinematic scene, vertical orientation"
-    
-    print(f"\n📝 Script: {script}")
-    print(f"🎨 Image Prompt: {image_prompt}\n")
-    return script, image_prompt
+    script = response.text.strip()
+    print(f"\n📝 Script: {script}\n")
+    return script
 
-def generate_image(prompt, output_filename="background.png"):
-    """Temporary Stage 2: Grabs a random 9:16 placeholder image to test the pipeline."""
-    print("🎨 Grabs a random placeholder image to keep the build moving...")
+def get_pexels_video(query, output_filename="background.mp4"):
+    """Stage 2: Fetches a free, royalty-free vertical video from Pexels with anti-bot headers."""
+    print(f"🎥 Searching Pexels for a vertical video about: '{query}'...")
     
-    # Random 720x1280 image
-    url = "https://picsum.photos/720/1280"
+    url = f"https://api.pexels.com/videos/search?query={urllib.parse.quote(query)}&orientation=portrait&size=medium&per_page=15"
+    
+    headers = {
+        'Authorization': os.environ["PEXELS_API_KEY"],
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    req = urllib.request.Request(url, headers=headers)
     
     try:
-        urllib.request.urlretrieve(url, output_filename)
-        print(f"✅ Placeholder saved as {output_filename}")
-        return output_filename
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode())
+            
+            if not data.get('videos'):
+                print("❌ No videos found on Pexels.")
+                return None
+                
+            video = random.choice(data['videos'])
+            video_files = video['video_files']
+            hd_file = next((file for file in video_files if file['quality'] == 'hd'), video_files[0])
+            download_link = hd_file['link']
+            
+            print("⬇️ Downloading video file securely...")
+            dl_req = urllib.request.Request(download_link, headers={'User-Agent': headers['User-Agent']})
+            with urllib.request.urlopen(dl_req) as dl_response, open(output_filename, 'wb') as out_file:
+                out_file.write(dl_response.read())
+                
+            print(f"✅ Video background saved as {output_filename}")
+            return output_filename
+            
     except Exception as e:
-        print(f"❌ Failed to grab placeholder: {e}")
+        print(f"❌ Failed to fetch Pexels video: {e}")
         return None
+
 async def generate_audio(text, output_filename="voiceover.mp3"):
-    """Stage 3: edge-tts generates a highly realistic, free voiceover locally."""
+    """Stage 3: edge-tts generates a realistic voiceover locally."""
     print("🎙️ Generating free voiceover...")
-    
     communicate = edge_tts.Communicate(text, "en-US-ChristopherNeural")
     await communicate.save(output_filename)
-    
     print(f"✅ Voiceover saved as {output_filename}")
     return output_filename
 
-def assemble_video(audio_path, image_path, output_filename="final_video.mp4"):
-    """Stage 4: MoviePy stitches the vertical image over the audio track."""
-    print("🎬 Assembling the final vertical video...")
+def assemble_video(audio_path, video_bg_path, output_filename="final_video.mp4"):
+    """Stage 4: MoviePy loops the background and stitches the audio."""
+    print("🎬 Assembling the final extended vertical video...")
     
     audio_clip = AudioFileClip(audio_path)
+    video_clip = VideoFileClip(video_bg_path)
     
-    image_clip = ImageClip(image_path).with_duration(audio_clip.duration)
-    final_clip = image_clip.with_audio(audio_clip)
+    # LOOP LOGIC: If the voiceover is longer than the stock video, loop the video
+    if audio_clip.duration > video_clip.duration:
+        print("🔄 Looping background video to match audio length...")
+        loop_count = int(audio_clip.duration // video_clip.duration) + 1
+        video_clip = concatenate_videoclips([video_clip] * loop_count)
     
-    # The crucial fix: explicitly define the temp audio file as .m4a
+    # Trim to exact length and add audio (MoviePy v2.0 syntax)
+    final_clip = video_clip.subclipped(0, audio_clip.duration).with_audio(audio_clip)
+    
     final_clip.write_videofile(
         output_filename, 
         fps=24, 
         codec="libx264", 
         audio_codec="aac", 
-        temp_audiofile="temp-audio.m4a", # Forces FFmpeg to use the correct audio container
-        remove_temp=True, # Cleans up the temp file after rendering is done
+        temp_audiofile="temp-audio.m4a", 
+        remove_temp=True, 
         logger=None
     )
     print(f"\n🎉 Success! Final video rendered as {output_filename}")
 
+def upload_to_youtube(video_path, title, description):
+    """Stage 5: Authenticate and push to your channel."""
+    print("🚀 Authenticating with YouTube...")
+    
+    flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', YOUTUBE_SCOPES)
+    credentials = flow.run_local_server(port=0)
+    youtube = build('youtube', 'v3', credentials=credentials)
+
+    print("📤 Uploading to YouTube Shorts...")
+    body = {
+        'snippet': {
+            'title': title,
+            'description': description + "\n\n#Shorts #Comedy #AIAutomation",
+            'tags': ['funny', 'skit', 'shorts', 'automation'],
+            'categoryId': '23'
+        },
+        'status': {
+            'privacyStatus': 'private'
+        }
+    }
+
+    media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
+    request = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media)
+    
+    response = request.execute()
+    print(f"\n✅ Video uploaded successfully! Video ID: {response.get('id')}")
+    print(f"🔗 View it here: https://studio.youtube.com/video/{response.get('id')}/edit")
+
 async def main():
     # --- 2. Execution ---
-    test_topic = "Funny tiktok skits"
+    test_topic = "a masked man robbing a bank but fails miserably"
     
-    script, img_prompt = generate_script_and_prompt(test_topic)
-    image_file = generate_image(img_prompt)
+    # 1. Write it (Now ~45 seconds)
+    script = generate_script_and_prompt(test_topic)
+    
+    # 2. Get Visuals (using "funny office" as search term)
+    bg_video_file = get_pexels_video("funny office") 
+    
+    # 3. Get Audio
     audio_file = await generate_audio(script)
     
-    if image_file and audio_file:
-        assemble_video(audio_file, image_file)
+    # 4. Assemble and Upload
+    if bg_video_file and audio_file:
+        final_video_path = "final_video.mp4"
+        assemble_video(audio_file, bg_video_file, final_video_path)
+        
+        upload_to_youtube(
+            video_path=final_video_path,
+            title="AI Corporate Comedy Skit",
+            description=script
+        )
 
 if __name__ == "__main__":
     asyncio.run(main())
