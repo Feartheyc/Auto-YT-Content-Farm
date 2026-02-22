@@ -97,9 +97,3 @@ automatically as private.
 -   Respect API rate limits
 -   Do not commit API keys
 -   This is experimental automation
-
-------------------------------------------------------------------------
-
-## 📜 License
-
-MIT License
