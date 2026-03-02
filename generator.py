@@ -9,6 +9,7 @@ import time
 from dotenv import load_dotenv 
 from google import genai
 from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
+from gtts import gTTS
 
 # --- YouTube API Libraries ---
 from googleapiclient.discovery import build
@@ -101,22 +102,14 @@ def download_video_set(keywords, visual_theme):
     return video_paths
 
 async def generate_audio(text, output_filename="voiceover.mp3"):
-    """Stage 3: Generates voiceover with retry logic for cloud environments."""
-    print("🎙️ Generating voiceover...")
-    
-    # Try up to 3 times if the connection is refused
-    for attempt in range(3):
-        try:
-            communicate = edge_tts.Communicate(text, "en-US-GuyNeural")
-            await communicate.save(output_filename)
-            print(f"✅ Voiceover saved as {output_filename}")
-            return output_filename
-        except Exception as e:
-            print(f"⚠️ TTS Attempt {attempt + 1} failed: {e}. Retrying in 5s...")
-            await asyncio.sleep(5)
-            
-    print("❌ All TTS attempts failed. Microsoft is blocking the cloud runner.")
-    return None
+    print("🎙️ Generating voiceover using gTTS (Cloud-Safe)...")
+    try:
+        tts = gTTS(text=text, lang='en')
+        tts.save(output_filename)
+        return output_filename
+    except Exception as e:
+        print(f"❌ gTTS failed: {e}")
+        return None
 
 def assemble_montage(audio_path, video_paths, output_filename="final_video.mp4"):
     """Stage 4: Assembles video with 1080x1920 cropping for full-screen impact."""
