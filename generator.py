@@ -4,12 +4,11 @@ import random
 import asyncio
 import urllib.parse
 import urllib.request
-import edge_tts
 import time
+from gtts import gTTS # NEW: Cloud-stable TTS
 from dotenv import load_dotenv 
 from google import genai
 from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
-from gtts import gTTS
 
 # --- YouTube API Libraries ---
 from googleapiclient.discovery import build
@@ -21,7 +20,6 @@ from google.oauth2.credentials import Credentials
 # --- 1. Security & Environment Setup ---
 load_dotenv() 
 
-# Pulling keys from Environment (Local .env or GitHub Secrets)
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 PEXELS_KEY = os.getenv("PEXELS_API_KEY")
 
@@ -34,12 +32,12 @@ YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
 def generate_full_package(topic, visual_theme):
     """Stage 1: Gemini generates Script, Montage Keywords, and SEO Metadata."""
-    print(f"🧠 Engineering content for: {topic} (Style: {visual_theme})...")
+    print(f"🧠 Engineering content for: {topic}...")
     
     prompt = (
         f"Create a YouTube Short package about '{topic}'. Style: {visual_theme}.\n\n"
         "1. A 45-second narration script (120 words).\n"
-        "2. 8 unique, highly specific Pexels search keywords.\n"
+        "2. 8 unique Pexels search keywords.\n"
         "3. A clickbaity Title.\n"
         "4. A description with a summary and 5-10 hashtags.\n"
         "5. Comma-separated SEO tags.\n\n"
@@ -54,7 +52,6 @@ def generate_full_package(topic, visual_theme):
     response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
     raw = response.text.strip()
     
-    # Advanced Multi-Line Parsing for robust extraction
     data = {'script': '', 'keywords': [], 'title': '', 'desc': '', 'tags': []}
     current_key = None
     for line in raw.split('\n'):
@@ -70,13 +67,12 @@ def generate_full_package(topic, visual_theme):
     return data
 
 def download_video_set(keywords, visual_theme):
-    """Stage 2: Downloads unique, portrait clips with style anchors."""
+    """Stage 2: Downloads a high-variety set of 9:16 background clips."""
     video_paths = []
     headers = {'Authorization': PEXELS_KEY, 'User-Agent': 'Mozilla/5.0'}
     BANNED_WORDS = ["birthday", "cake", "party", "balloon"]
     
     for i, query in enumerate(keywords):
-        # Anchor search with visual_theme to prevent mismatch
         enhanced_query = f"{query} {visual_theme} -party -birthday"
         print(f"🎥 Scouting Scene {i+1}: '{enhanced_query}'...")
         
@@ -92,7 +88,7 @@ def download_video_set(keywords, visual_theme):
                     valid_videos.append(video)
                 
                 if valid_videos:
-                    selected = random.choice(valid_videos) # Shuffle variety
+                    selected = random.choice(valid_videos)
                     path = f"scene_{i}.mp4"
                     dl_req = urllib.request.Request(selected['video_files'][0]['link'], headers=headers)
                     with urllib.request.urlopen(dl_req) as dl_res, open(path, 'wb') as f:
@@ -102,17 +98,20 @@ def download_video_set(keywords, visual_theme):
     return video_paths
 
 async def generate_audio(text, output_filename="voiceover.mp3"):
-    print("🎙️ Generating voiceover using gTTS (Cloud-Safe)...")
+    """Stage 3: Cloud-stable TTS generation using gTTS."""
+    print("🎙️ Generating voiceover (Cloud-Safe)...")
     try:
-        tts = gTTS(text=text, lang='en')
+        # We use a wrapper to make the synchronous gTTS work in our async loop
+        tts = gTTS(text=text, lang='en', slow=False)
         tts.save(output_filename)
+        print(f"✅ Voiceover saved as {output_filename}")
         return output_filename
     except Exception as e:
-        print(f"❌ gTTS failed: {e}")
+        print(f"❌ TTS Generation failed: {e}")
         return None
 
 def assemble_montage(audio_path, video_paths, output_filename="final_video.mp4"):
-    """Stage 4: Assembles video with 1080x1920 cropping for full-screen impact."""
+    """Stage 4: Assembles video with 1080x1920 cropping to fix black bars."""
     print(f"🎬 Rendering 1080x1920 montage with {len(video_paths)} clips...")
     audio_clip = AudioFileClip(audio_path)
     target_w, target_h = 1080, 1920
@@ -121,7 +120,6 @@ def assemble_montage(audio_path, video_paths, output_filename="final_video.mp4")
     for p in video_paths:
         try:
             clip = VideoFileClip(p).without_audio()
-            # CROP AND RESIZE LOGIC TO REMOVE BLACK BARS
             factor = max(target_w / clip.w, target_h / clip.h)
             clip = clip.resized(factor).cropped(
                 x_center=clip.w*factor/2, 
@@ -142,7 +140,6 @@ def assemble_montage(audio_path, video_paths, output_filename="final_video.mp4")
     final_clip = bg_video.subclipped(0, audio_clip.duration).with_audio(audio_clip)
     final_clip.write_videofile(output_filename, fps=24, codec="libx264", audio_codec="aac", logger=None)
     
-    # Force-close handles for Windows cleanup
     final_clip.close(); audio_clip.close(); bg_video.close()
     for c in loaded_clips: c.close()
     time.sleep(2) 
@@ -151,17 +148,14 @@ def assemble_montage(audio_path, video_paths, output_filename="final_video.mp4")
         except: pass
 
 def upload_to_youtube(video_path, metadata):
-    """Stage 5: Automated Upload with token-refresh capability."""
+    """Stage 5: Automated Upload using token refresh logic."""
     creds = None
-    # Look for existing token to avoid manual login
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', YOUTUBE_SCOPES)
-    
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # First-time local login required
             flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', YOUTUBE_SCOPES)
             creds = flow.run_local_server(port=0)
         with open('token.json', 'w') as token: token.write(creds.to_json())
@@ -172,16 +166,15 @@ def upload_to_youtube(video_path, metadata):
             'title': metadata['title'][:100], 
             'description': metadata['desc'],
             'tags': metadata['tags'],
-            'categoryId': '23' # Comedy
+            'categoryId': '23'
         },
-        'status': {'privacyStatus': 'private'} # Set to 'public' for automation
+        'status': {'privacyStatus': 'private'}
     }
     media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
     youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media).execute()
     print(f"🚀 Published: {metadata['title']}")
 
 async def main():
-    # Example Automated Run
     topic = "Funny cat stories"
     style = "funny videos about cat cinematic lighting"
     
