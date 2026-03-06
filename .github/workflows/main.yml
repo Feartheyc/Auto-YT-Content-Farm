@@ -18,6 +18,8 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-liberation # Required for Text Overlays
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
