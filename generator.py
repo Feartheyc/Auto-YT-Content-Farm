@@ -5,6 +5,7 @@ import asyncio
 import urllib.parse
 import urllib.request
 import time
+import platform
 from gtts import gTTS 
 from dotenv import load_dotenv 
 from google import genai
@@ -23,11 +24,19 @@ if not GEMINI_KEY or not PEXELS_KEY:
 client = genai.Client(api_key=GEMINI_KEY)
 YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
-# --- 2. Advanced Visual Functions ---
+# --- 2. Cross-Platform Font Setup ---
+# Handles the difference between your local Windows machine and GitHub's Ubuntu server
+if platform.system() == "Linux":
+    MAIN_FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+else:
+    MAIN_FONT = "Arial"
+
+# --- 3. Advanced Visual Functions ---
 
 def create_text_overlay(text, duration, width):
     """Creates a bold 'Hook' title for the top of the video."""
     return TextClip(
+        font=MAIN_FONT, # <-- FIX APPLIED HERE
         text=text.upper(),
         font_size=70,
         color='white',
@@ -46,7 +55,7 @@ def create_progress_bar(duration, width, height=15):
         lambda clip: clip.resized(lambda t: [max(1, int(width * (t/duration))), height])
     )
 
-# --- 3. Core Logic ---
+# --- 4. Core Logic ---
 
 def generate_full_package(topic, visual_theme):
     """Stage 1: Gemini generates Script, Montage Keywords, and SEO Metadata."""
@@ -145,7 +154,16 @@ def assemble_pro_montage(audio_path, video_paths, metadata, output_filename="fin
 
     # Overlays
     hook_overlay = create_text_overlay(metadata['title'], 5, target_w)
-    branding = TextClip(text="@Feartheyc", font_size=40, color='white', opacity=0.5).with_duration(main_video.duration).with_position(('center', 1750))
+    
+    # Branding Overlay
+    branding = TextClip(
+        font=MAIN_FONT, # <-- FIX APPLIED HERE
+        text="@Feartheyc", 
+        font_size=40, 
+        color='white', 
+        opacity=0.5
+    ).with_duration(main_video.duration).with_position(('center', 1750))
+    
     p_bar = create_progress_bar(main_video.duration, target_w)
 
     # Background Music Mixing
