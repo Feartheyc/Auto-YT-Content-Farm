@@ -11,6 +11,13 @@ from dotenv import load_dotenv
 from google import genai
 from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip, ColorClip, TextClip, afx
 
+# --- YouTube API Libraries ---
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+
 # --- 1. Security & Environment Setup ---
 load_dotenv() 
 
@@ -25,7 +32,6 @@ client = genai.Client(api_key=GEMINI_KEY)
 YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
 # --- 2. Cross-Platform Font Setup ---
-# Handles the difference between your local Windows machine and GitHub's Ubuntu server
 if platform.system() == "Linux":
     MAIN_FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 else:
@@ -36,12 +42,12 @@ else:
 def create_text_overlay(text, duration, width):
     """Creates a bold 'Hook' title for the top of the video."""
     return TextClip(
-        font=MAIN_FONT, # <-- FIX APPLIED HERE
+        font=MAIN_FONT,
         text=text.upper(),
         font_size=70,
         color='white',
         method='caption',
-        size=(width * 0.8, None),
+        size=(int(width * 0.8), None), # <-- FIX APPLIED HERE: int() prevents the float error
         text_align='center',
         stroke_color='black',
         stroke_width=2
@@ -50,7 +56,6 @@ def create_text_overlay(text, duration, width):
 def create_progress_bar(duration, width, height=15):
     """Creates an animated red progress bar at the bottom."""
     bar = ColorClip(size=(width, height), color=(255, 0, 0))
-    # Animate the bar width from 1 pixel to full width over the duration
     return bar.with_duration(duration).with_position(('left', 'bottom')).map_effects(
         lambda clip: clip.resized(lambda t: [max(1, int(width * (t/duration))), height])
     )
@@ -155,9 +160,8 @@ def assemble_pro_montage(audio_path, video_paths, metadata, output_filename="fin
     # Overlays
     hook_overlay = create_text_overlay(metadata['title'], 5, target_w)
     
-    # Branding Overlay
     branding = TextClip(
-        font=MAIN_FONT, # <-- FIX APPLIED HERE
+        font=MAIN_FONT, 
         text="@Feartheyc", 
         font_size=40, 
         color='white', 
