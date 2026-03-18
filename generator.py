@@ -175,8 +175,8 @@ def upload_to_youtube(video_path, metadata):
     print(f"🚀 Published: {metadata['title']}")
 
 async def main():
-    topic = "Funny cat stories"
-    style = "funny videos about cat cinematic lighting"
+    topic = "Amazing Dinosaur stories and fact"
+    style = "cool unknown facts and stories about dinosaurs"
     
     content = generate_full_package(topic, style)
     video_files = download_video_set(content['keywords'], style) 
